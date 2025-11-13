@@ -1,0 +1,100 @@
+version: "3.8"
+
+services:
+  nginx:
+    image: nginx:stable
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "80:80"
+    depends_on:
+      - api-gw-1
+      - api-gw-2
+      - order-svc-1
+      - order-svc-2
+
+  api-gw-1:
+    build:
+      context: ./services/api-gateway
+    container_name: api-gw-1
+    environment:
+      - BACKEND_ORDER_URL=http://nginx/order
+    depends_on:
+      - order-svc-1
+      - order-svc-2
+
+  api-gw-2:
+    build:
+      context: ./services/api-gateway
+    container_name: api-gw-2
+    environment:
+      - BACKEND_ORDER_URL=http://nginx/order
+    depends_on:
+      - order-svc-1
+      - order-svc-2
+
+  order-svc-1:
+    build:
+      context: ./services/order-service
+    container_name: order-svc-1
+    environment:
+      - WHOAMI_ID=order-svc-1
+      - KAFKA_BOOTSTRAP=kafka:9092
+
+  order-svc-2:
+    build:
+      context: ./services/order-service
+    container_name: order-svc-2
+    environment:
+      - WHOAMI_ID=order-svc-2
+      - KAFKA_BOOTSTRAP=kafka:9092
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: "zookeeper:2181"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+
+  redis:
+    image: redis:7
+    container_name: redis
+    ports:
+      - "6379:6379"
+
+  matching-engine:
+    build:
+      context: ./services/matching-engine
+    container_name: matching-engine
+    environment:
+      - KAFKA_BOOTSTRAP=kafka:9092
+      - REDIS_HOST=redis
+    depends_on:
+      - kafka
+      - redis
+    ports:
+      - "8003:8003"
+
+
+  frontend:
+    build:
+      context: ./services/frontend
+    container_name: frontend
+    depends_on:
+      - nginx
+    ports:
+      - "8080:80"
