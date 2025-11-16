@@ -1,0 +1,98 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>Trading Lab — Login</title>
+</head>
+<body>
+
+<h1>Trading Lab — Login</h1>
+
+<div style="max-width:300px;">
+  <label>Username</label><br>
+  <input id="username" type="text" style="width:100%; padding:5px;"><br><br>
+
+  <label>Password</label><br>
+  <input id="password" type="password" style="width:100%; padding:5px;"><br><br>
+
+  <button onclick="login()" style="padding:8px 12px;">Login</button>
+
+  <p id="msg"></p>
+</div>
+
+<script>
+async function login() {
+  const user = document.getElementById("username").value;
+  const pass = document.getElementById("password").value;
+
+  const resp = await fetch("http://localhost:8004/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username: user, password: pass })
+  });
+
+  const data = await resp.json();
+
+  if (data.access_token) {
+    localStorage.setItem("token", data.access_token);
+    document.getElementById("msg").innerText = "Login successful!";
+  } else {
+    document.getElementById("msg").innerText = "Login failed!";
+  }
+}
+
+
+async function placeOrder() {
+  const token = localStorage.getItem("token");
+  if (!token) {
+    document.getElementById("orderMsg").innerText = "Please login first!";
+    return;
+  }
+
+  const data = {
+    id: document.getElementById("oid").value,
+    price: Number(document.getElementById("price").value),
+    qty: Number(document.getElementById("qty").value),
+    symbol: document.getElementById("symbol").value
+  };
+
+  const resp = await fetch("http://localhost/place_order", {
+    method: "POST",
+    headers: {
+      "Authorization": "Bearer " + token,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(data)
+  });
+
+  const result = await resp.json();
+  document.getElementById("orderMsg").innerText = JSON.stringify(result);
+}
+
+</script>
+
+<h2>Place Order</h2>
+
+<div style="max-width:300px;">
+  <label>Order ID</label><br>
+  <input id="oid" type="text" placeholder="ord-123" style="width:100%; padding:5px;"><br><br>
+
+  <label>Price</label><br>
+  <input id="price" type="number" value="100" style="width:100%; padding:5px;"><br><br>
+
+  <label>Quantity</label><br>
+  <input id="qty" type="number" value="1" style="width:100%; padding:5px;"><br><br>
+
+  <label>Symbol</label><br>
+  <input id="symbol" type="text" value="ABC" style="width:100%; padding:5px;"><br><br>
+
+  <button onclick="placeOrder()" style="padding:8px 12px;">Place Order</button>
+
+  <p id="orderMsg"></p>
+</div>
+
+
+
+</body>
+</html>
+

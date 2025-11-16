@@ -1,0 +1,310 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>Trading Lab — Place Order</title>
+
+  <style>
+    :root{
+      --bg:#fff; --muted:#666; --ok:#16a34a; --warn:#f59e0b; --err:#ef4444; --info:#0ea5e9;
+      --card:#fbfcfd; --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, "Roboto Mono", "Courier New", monospace;
+    }
+    body { font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; padding:24px; max-width:1000px; margin:auto; background:var(--bg); color:#0b1220; }
+    h1 { margin:0 0 12px; font-size:22px; }
+    label { font-weight:600; color:var(--muted); display:block; margin-bottom:6px; }
+    input[type="text"], input[type="number"] { width:100%; padding:10px; border-radius:8px; border:1px solid #e6e6e6; box-sizing:border-box; }
+    button { padding:10px 14px; border-radius:8px; border:0; background:#0b69ff; color:white; cursor:pointer; }
+    button.secondary { background:#f3f4f6; color:#0b1220; margin-left:8px; }
+
+    .panel { background:var(--card); padding:14px; border-radius:12px; box-shadow:0 6px 20px rgba(11,17,32,0.04); margin-bottom:18px; }
+    .row { display:flex; gap:12px; align-items:center; margin-bottom:12px; }
+    .col { flex:1; }
+
+    /* Timeline */
+    #timeline { margin-top:18px; }
+    .tl { list-style:none; padding:0; margin:0; display:flex; flex-direction:column-reverse; } /* newest first */
+    .tl-item { display:flex; gap:12px; align-items:flex-start; padding:10px; border-radius:10px; margin-bottom:10px; background:linear-gradient(180deg,#fff,#fbfdff); box-shadow:0 1px 0 rgba(11,17,32,0.03); opacity:0; transform:translateY(6px); animation:appear .28s forwards; }
+    @keyframes appear{ to { opacity:1; transform:none; } }
+    .tl-time { width:180px; color:var(--muted); font-size:13px; flex:0 0 180px; }
+    .tl-body { flex:1; }
+    .tl-title { font-weight:700; font-size:14px; margin-bottom:4px; }
+    .tl-desc { color:#334155; font-size:13px; }
+    .tl-meta { margin-top:8px; font-family:var(--mono); font-size:12px; color:#0b1220; background:#f8fafc; padding:8px; border-radius:6px; display:inline-block; }
+
+    .badge-ok { border-left:4px solid var(--ok); padding-left:10px; }
+    .badge-info { border-left:4px solid var(--info); padding-left:10px; }
+    .badge-warn { border-left:4px solid var(--warn); padding-left:10px; }
+    .badge-err { border-left:4px solid var(--err); padding-left:10px; }
+
+    .spinner { width:14px; height:14px; border-radius:50%; border:2px solid rgba(11,17,32,0.08); border-top-color:var(--info); display:inline-block; animation:spin .8s linear infinite; vertical-align:middle; margin-right:8px; }
+    @keyframes spin{ to { transform:rotate(360deg); } }
+
+    pre { background:#0f172a08; padding:10px; border-radius:8px; overflow:auto; font-family:var(--mono); font-size:13px; }
+
+    .summary { margin-top:12px; font-size:13px; color:var(--muted); }
+    .small { font-size:12px; color:var(--muted); margin-top:6px; }
+
+    .controls { display:flex; gap:8px; align-items:center; }
+    a { color:#0b69ff; text-decoration:none; }
+  </style>
+</head>
+<body>
+
+  <h1>Place Order</h1>
+
+  <div class="panel">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+      <div>
+        <div id="who" style="font-weight:700">Logged in as: —</div>
+        <div class="small">Make sure you're signed up & logged in. Unregistered users cannot place orders.</div>
+      </div>
+      <div class="controls">
+        <button onclick="logout()" class="secondary">Logout</button>
+        <a href="login.html" style="margin-left:8px">Back to Login</a>
+        <a href="signup.html" style="margin-left:8px">Sign up</a>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="col">
+        <label>Order ID</label>
+        <input id="oid" type="text" placeholder="ord-123" />
+      </div>
+      <div style="width:120px">
+        <label>Price</label>
+        <input id="price" type="number" step="0.01" value="100" />
+      </div>
+      <div style="width:100px">
+        <label>Qty</label>
+        <input id="qty" type="number" value="1" />
+      </div>
+      <div style="width:120px">
+        <label>Symbol</label>
+        <input id="symbol" type="text" value="ABC" />
+      </div>
+    </div>
+
+    <div style="display:flex; gap:10px; margin-top:6px;">
+      <button id="placeBtn" onclick="placeOrder()">Place Order</button>
+      <button class="secondary" onclick="fillSample()">Sample</button>
+      <div style="flex:1"></div>
+      <div class="small" id="statusHint">API endpoint: <code>/place_order</code> (via nginx)</div>
+    </div>
+  </div>
+
+  <div id="timeline" class="panel">
+    <h3 style="margin-top:0">Order Timeline</h3>
+    <ul id="tl" class="tl"></ul>
+    <div class="summary" id="traceSummary"></div>
+  </div>
+
+<script>
+/* Single-file place_order with detailed timeline & explanations.
+   - POST to /place_order (nginx -> api-gateway -> order-service)
+   - Poll GET /trade/<id> until matching-engine stores trade in Redis
+   - Visual timeline with mapping to real world
+*/
+
+const API_PLACE = "http://localhost/place_order";
+const TRADE_BASE = "http://localhost/trade/";   // call /trade/<id>
+const tl = document.getElementById("tl");
+const summaryEl = document.getElementById("traceSummary");
+const whoEl = document.getElementById("who");
+const token = localStorage.getItem("token");
+const username = localStorage.getItem("username") || null;
+
+// Helper formatting
+function human(ts){
+  if(!ts) return new Date().toLocaleString();
+  if(typeof ts === "number" && ts < 1e12) ts = ts * 1000;
+  return new Date(ts).toLocaleString();
+}
+function nowISO(){ return new Date().toISOString(); }
+
+function pushEntry(kind, title, desc, level="info"){
+  const li = document.createElement("li");
+  li.className = "tl-item " + (level==="ok" ? "badge-ok" : level==="warn" ? "badge-warn" : level==="err" ? "badge-err" : "badge-info");
+  li.innerHTML = `
+    <div class="tl-time">${human()}</div>
+    <div class="tl-body">
+      <div class="tl-title">${kind} — ${title}</div>
+      <div class="tl-desc">${desc || ""}</div>
+    </div>
+  `;
+  tl.insertBefore(li, tl.firstChild);
+  return li;
+}
+
+function pushSpinner(kind, title, label){
+  const li = document.createElement("li");
+  li.className = "tl-item badge-info";
+  li.innerHTML = `
+    <div class="tl-time">${human()}</div>
+    <div class="tl-body">
+      <div class="tl-title"><span class="spinner"></span>${kind} — ${title}</div>
+      <div class="tl-desc">${label || ""}</div>
+    </div>
+  `;
+  tl.insertBefore(li, tl.firstChild);
+  return li;
+}
+
+// Auth/UX
+function ensureAuth(){
+  if(!token){
+    alert("Not logged in — please sign up and login first.");
+    location.href = "login.html";
+    return false;
+  }
+  whoEl.textContent = "Logged in as: " + (username || "unknown");
+  return true;
+}
+ensureAuth();
+
+function logout(){
+  localStorage.removeItem("token");
+  localStorage.removeItem("username");
+  location.href = "login.html";
+}
+
+function fillSample(){
+  document.getElementById("oid").value = "ui-"+Date.now();
+  document.getElementById("price").value = 100;
+  document.getElementById("qty").value = 1;
+  document.getElementById("symbol").value = "ABC";
+}
+
+/* Main flow:
+   1) Client -> nginx (show client timestamp)
+   2) POST /place_order -> api ack (immediate)
+   3) order-service publishes to Kafka (orders topic) - inferred
+   4) matching-engine consumes orders -> produces trade to trades topic & stores to Redis
+   5) front-end polls /trade/<id> to get matching confirmation
+*/
+async function placeOrder(){
+  if(!ensureAuth()) return;
+
+  const id = (document.getElementById("oid").value.trim() || ("ui-"+Date.now()));
+  const price = Number(document.getElementById("price").value || 0);
+  const qty = Number(document.getElementById("qty").value || 1);
+  const symbol = document.getElementById("symbol").value.trim() || "ABC";
+  const payload = { id, price, qty, symbol };
+
+  // 1) Client send
+  pushEntry("Client", `placing order id=${id} → sending to nginx (client timestamp)`,
+            `Client payload: ${JSON.stringify(payload)}. This simulates trader app sending order to broker's API.` , "info");
+
+  // show interim spinner for network
+  const spinnerEntry = pushSpinner("Network", "Sending to /place_order", "waiting for API ack...");
+
+  // 2) POST request (nginx -> api-gw -> order service)
+  let apiResp = null;
+  let apiReceivedAt = Date.now();
+  try {
+    const r = await fetch(API_PLACE, {
+      method: "POST",
+      headers: {
+        "Content-Type":"application/json",
+        "Authorization": token ? ("Bearer " + token) : ""
+      },
+      body: JSON.stringify(payload)
+    });
+    apiReceivedAt = Date.now();
+    let body;
+    try { body = await r.json(); } catch(e) { body = { raw: "non-json response" }; }
+
+    spinnerEntry.querySelector(".tl-title").innerHTML = `Network — /place_order response`;
+    spinnerEntry.querySelector(".tl-desc").innerText = `HTTP ${r.status} — ${JSON.stringify(body)}`;
+
+    if(!r.ok){
+      spinnerEntry.classList.remove("badge-info");
+      spinnerEntry.classList.add("badge-err");
+      pushEntry("API", "API returned error", `Status ${r.status}. ${JSON.stringify(body)}`, "err");
+      summaryEl.innerText = "Stopped: API returned error. Check api-gateway and order-service logs.";
+      return;
+    }
+
+    apiResp = body;
+    spinnerEntry.classList.remove("badge-info");
+    spinnerEntry.classList.add("badge-ok");
+
+  } catch (err){
+    spinnerEntry.classList.remove("badge-info");
+    spinnerEntry.classList.add("badge-err");
+    spinnerEntry.querySelector(".tl-desc").innerText = `Network error: ${err.message}`;
+    summaryEl.innerText = "Stopped: network error while contacting API.";
+    return;
+  }
+
+  // 3) API ack (immediate)
+  pushEntry("API", `acknowledged order (immediate ack). handled_by=${apiResp.handled_by || "unknown"}`,
+            `Client received ack at ${human(apiReceivedAt)}. In broker systems this is the acknowledgement that broker received order.`, "ok");
+
+  // 4) infer order-service -> kafka publish
+  pushEntry("Ingest", `Order-service published to message bus (orders topic) — inferred`,
+            `In your local environment order-service logs show it publishes to Kafka. The UI cannot directly see Kafka; we infer this step after API ack.`, "info");
+
+  // 5) Poll matching-engine for confirmation
+  pushEntry("Poll", `Polling ${window.location.origin}${TRADE_BASE+encodeURIComponent(id)} for confirmation...`,
+            `Front-end will poll the matching-engine (which persists a trade to Redis) for up to 15s.`, "info");
+
+  const trade = await pollForTrade(id, { interval: 600, timeout: 15000 });
+
+  if(trade){
+    // matching engine produced trade and stored it in Redis, and also produced to trades topic
+    const serverTs = trade.ts ? new Date(trade.ts * 1000) : null;
+    pushEntry("Matching-engine", `confirmed trade (order=${id}).`, `trade payload: ${JSON.stringify(trade)} — server time: ${serverTs ? serverTs.toLocaleString() : "unknown"}`, "ok");
+    pushEntry("Confirmed", `Confirmed: ${id} price=${trade.price} qty=${trade.qty} at ${serverTs ? serverTs.toLocaleString() : human()}`,
+              `Final confirmation returned to UI. This mimics exchange matching and confirmation back to broker and trader.`, "ok");
+  } else {
+    pushEntry("Timeout", "No confirmation from matching-engine within timeout", "Check matching-engine logs, Kafka, and Redis.", "warn");
+  }
+
+  // final compact trace summary (client-side + inferred server timeline)
+  const trace = {
+    client_sent_at: human(),
+    api_ack_handled_by: apiResp.handled_by || null,
+    api_ack_received_at: human(apiReceivedAt),
+    trade_found: !!trade,
+    trade_server_ts: trade ? trade.ts : null,
+    observed_trade: trade || null,
+    path: ["browser → nginx → api-gateway → order-service → kafka → matching-engine → redis → browser"]
+  };
+  summaryEl.innerHTML = `<strong>Trace summary</strong><pre>${JSON.stringify(trace, null, 2)}</pre>`;
+}
+
+/* Poll /trade/<id> until found or timeout */
+async function pollForTrade(id, {interval=500, timeout=12000}={}){
+  const url = TRADE_BASE + encodeURIComponent(id);
+  const start = Date.now();
+  while(Date.now() - start < timeout){
+    try {
+      const r = await fetch(url, { method: "GET" });
+      if(r.ok){
+        const b = await r.json().catch(()=>null);
+        if(b && b.found){
+          // matching-engine stores trade as JSON; return trade object
+          return b.trade || b;
+        }
+      }
+    } catch(e){
+      // ignore network hiccups, we'll retry
+    }
+    await new Promise(r => setTimeout(r, interval));
+  }
+  return null;
+}
+
+/* ensure buttons don't double-click */
+document.getElementById("placeBtn").addEventListener("click", (ev) => {
+  ev.target.disabled = true;
+  setTimeout(()=> ev.target.disabled = false, 2000);
+});
+
+// Auto-sample on first open
+if(!document.getElementById("oid").value) fillSample();
+
+</script>
+</body>
+</html>
+

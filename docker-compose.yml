@@ -1,81 +1,76 @@
-version: "3.8"
-
 services:
   nginx:
     image: nginx:stable
-    volumes:
-      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    container_name: trading-lab-nginx
     ports:
       - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
     depends_on:
       - api-gw-1
       - api-gw-2
-      - order-svc-1
-      - order-svc-2
+    networks:
+      - labnet
 
+  # ------------------------
+  # API GATEWAY (2 replicas)
+  # ------------------------
   api-gw-1:
     build:
       context: ./services/api-gateway
     container_name: api-gw-1
     environment:
-      - BACKEND_ORDER_URL=http://nginx/order
-    depends_on:
-      - order-svc-1
-      - order-svc-2
+      - ORDER_URL=http://nginx/order
+      - JWT_SECRET=MY_SUPER_SECRET
+    expose:
+      - "8000"
+    networks:
+      - labnet
 
   api-gw-2:
     build:
       context: ./services/api-gateway
     container_name: api-gw-2
     environment:
-      - BACKEND_ORDER_URL=http://nginx/order
-    depends_on:
-      - order-svc-1
-      - order-svc-2
+      - ORDER_URL=http://nginx/order
+      - JWT_SECRET=MY_SUPER_SECRET
+    expose:
+      - "8000"
+    networks:
+      - labnet
 
+  # ------------------------
+  # ORDER SERVICE (2 replicas)
+  # ------------------------
   order-svc-1:
     build:
       context: ./services/order-service
     container_name: order-svc-1
     environment:
-      - WHOAMI_ID=order-svc-1
       - KAFKA_BOOTSTRAP=kafka:9092
+    expose:
+      - "8001"
+    networks:
+      - labnet
+    depends_on:
+      - kafka
 
   order-svc-2:
     build:
       context: ./services/order-service
     container_name: order-svc-2
     environment:
-      - WHOAMI_ID=order-svc-2
       - KAFKA_BOOTSTRAP=kafka:9092
-
-  zookeeper:
-    image: confluentinc/cp-zookeeper:7.5.0
-    environment:
-      ZOOKEEPER_CLIENT_PORT: 2181
-      ZOOKEEPER_TICK_TIME: 2000
-    ports:
-      - "2181:2181"
-
-  kafka:
-    image: confluentinc/cp-kafka:7.5.0
+    expose:
+      - "8001"
+    networks:
+      - labnet
     depends_on:
-      - zookeeper
-    ports:
-      - "9092:9092"
-    environment:
-      KAFKA_BROKER_ID: 1
-      KAFKA_ZOOKEEPER_CONNECT: "zookeeper:2181"
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      - kafka
 
-  redis:
-    image: redis:7
-    container_name: redis
-    ports:
-      - "6379:6379"
-
+  # ------------------------
+  # MATCHING ENGINE
+  # ------------------------
   matching-engine:
     build:
       context: ./services/matching-engine
@@ -83,18 +78,82 @@ services:
     environment:
       - KAFKA_BOOTSTRAP=kafka:9092
       - REDIS_HOST=redis
+    expose:
+      - "8003"
     depends_on:
       - kafka
       - redis
+    networks:
+      - labnet
+
+  # ------------------------
+  # AUTH SERVICE
+  # ------------------------
+  auth-service:
+    build:
+      context: ./services/auth-service
+    container_name: auth-service
+    environment:
+      - JWT_SECRET=MY_SUPER_SECRET    # change to a secure secret in prod
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
     ports:
-      - "8003:8003"
+      - "8004:8004"
+    depends_on:
+      - redis
+    networks:
+      - labnet
 
-
+  # ------------------------
+  # FRONTEND
+  # ------------------------
   frontend:
     build:
-      context: ./services/frontend
+      context: ./frontend
     container_name: frontend
-    depends_on:
-      - nginx
     ports:
       - "8080:80"
+    depends_on:
+      - nginx
+    networks:
+      - labnet
+
+  # ------------------------
+  # KAFKA + ZOOKEEPER
+  # ------------------------
+  zookeeper:
+    image: wurstmeister/zookeeper
+    container_name: zookeeper
+    ports:
+      - "2181:2181"
+    networks:
+      - labnet
+
+  kafka:
+    image: wurstmeister/kafka
+    container_name: kafka
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_ADVERTISED_HOST_NAME: kafka
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+    depends_on:
+      - zookeeper
+    networks:
+      - labnet
+
+  # ------------------------
+  # REDIS
+  # ------------------------
+  redis:
+    image: redis:latest
+    container_name: redis
+    ports:
+      - "6379:6379"
+    networks:
+      - labnet
+
+networks:
+  labnet:
+    driver: bridge
+
